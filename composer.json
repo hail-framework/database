@@ -1,6 +1,6 @@
 {
   "name": "hail/database",
-  "description": "PHP 7.1 Framework",
+  "description": "Hail database",
   "type": "library",
   "keywords": ["hail", "framework", "database", "SQL", "MySQL", "MSSQL", "SQLite", "PostgreSQL", "MariaDB", "Oracle"],
   "homepage": "http://framework.flyinghail.com/",
@@ -23,7 +23,7 @@
   "repositories": [
     {
       "type": "vcs",
-      "url": "https://github.com/hail-framework/framework.git"
+      "url": "https://github.com/hail-framework/database.git"
     }
   ],
   "require": {
