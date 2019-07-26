@@ -9,7 +9,7 @@ use Psr\SimpleCache\CacheInterface;
  * Cache database query with PSR16
  *
  * @package Hail\Database
- * @author  Feng Hao <flyinghail@msn.com>
+ * @author  FENG Hao <flyinghail@msn.com>
  */
 class SimpleCache extends AbstractCache
 {

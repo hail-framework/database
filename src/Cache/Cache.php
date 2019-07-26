@@ -9,7 +9,7 @@ use Psr\Cache\CacheItemPoolInterface;
  * Cache database query with PSR6
  *
  * @package Hail\Database
- * @author  Feng Hao <flyinghail@msn.com>
+ * @author  FENG Hao <flyinghail@msn.com>
  */
 class Cache extends AbstractCache
 {

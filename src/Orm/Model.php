@@ -9,7 +9,7 @@ use PDO;
 /**
  * Simple ORM
  *
- * @author Hao Feng <flyinghail#msn.com>
+ * @author FENG Hao <flyinghail#msn.com>
  *
  * @method $this equal($field, $value = null, $relation = 'AND')
  * @method $this eq($field, $value = null, $relation = 'AND')

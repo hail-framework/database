@@ -15,7 +15,7 @@ use Hail\SafeStorage\SafeStorageTrait;
  * Part of the code from Medoo
  *
  * @package Hail\Database
- * @author  Feng Hao <flyinghail@msn.com>
+ * @author  FENG Hao <flyinghail@msn.com>
  */
 class Database
 {
