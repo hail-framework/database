@@ -468,7 +468,7 @@ class Database
     /**
      * @code
      *
-     *      $rows = $db->selectRow($sql);
+     *      $rows = $db->getRow($sql);
      *      if (!$rows->valid()) {
      *          //error
      *      }
@@ -482,7 +482,7 @@ class Database
      *
      * @return \Generator
      */
-    public function selectRow($struct, $fetch = PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
+    public function getRow($struct, $fetch = PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
     {
         [$sql, $map] = $this->sql->select($struct);
 
@@ -502,7 +502,9 @@ class Database
             return;
         }
 
-        yield $query->fetch($fetch);
+        while ($row = $query->fetch($fetch)) {
+            yield $row;
+        }
     }
 
     /**
