@@ -343,6 +343,8 @@ abstract class Model
         switch ($name) {
             case 'equal':
             case 'eq':
+            case 'notEqual':
+            case 'ne':
                 if (\is_array($value)) {
                     $value = \json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
                 }
