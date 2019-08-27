@@ -9,7 +9,7 @@ use PDO;
 /**
  * Simple ORM
  *
- * @author FENG Hao <flyinghail#msn.com>
+ * @author FENG Hao <flyinghail@msn.com>
  *
  * @method $this equal($field, $value = null, $relation = 'AND')
  * @method $this eq($field, $value = null, $relation = 'AND')
@@ -40,7 +40,7 @@ use PDO;
  * @method $this null($field, $value = null, $relation = 'AND')
  * @method $this isNotNull($field, $value = null, $relation = 'AND')
  * @method $this notNull($field, $value = null, $relation = 'AND')
- * @method $this nnull($field, $value = null, $relation = 'AND')
+ * @method $this nn($field, $value = null, $relation = 'AND')
  * @method $this select(...$fields)
  * @method $this from($table)
  * @method $this set(...$array)
@@ -81,7 +81,7 @@ abstract class Model
         'in' => '',
         'notIn' => '[!]', 'ni' => '[!]',
         'isNull' => '', 'null' => '',
-        'isNotNull' => '[!]', 'notNull' => '[!]', 'nnull' => '[!]',
+        'isNotNull' => '[!]', 'notNull' => '[!]', 'nn' => '[!]',
     ];
 
     /**
@@ -368,7 +368,7 @@ abstract class Model
             case 'null':
             case 'isNotNull':
             case 'notNull':
-            case 'nnull':
+            case 'nn':
                 $value = null;
                 break;
         }
