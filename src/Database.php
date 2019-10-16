@@ -762,12 +762,12 @@ class Database
         return $result;
     }
 
-    public function error()
+    public function error(): array
     {
         return $this->statement ? $this->statement->errorInfo() : $this->pdo->errorInfo();
     }
 
-    public function info()
+    public function info(): array
     {
         $output = [
             'server' => 'SERVER_INFO',
@@ -787,7 +787,7 @@ class Database
         return $output;
     }
 
-    public function generate(string $query, array $map)
+    public function generate(string $query, array $map): string
     {
         $identifier = [
             'mysql' => '`$1`',

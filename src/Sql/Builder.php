@@ -157,7 +157,7 @@ class Builder
         $index = (string) $this->guid;
         ++$this->guid;
 
-        return ":HAIL_{$index}";
+        return ":HA_{$index}_IL";
     }
 
     protected function columnQuote(string $string): string
