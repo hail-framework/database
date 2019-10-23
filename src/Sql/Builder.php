@@ -112,7 +112,8 @@ class Builder
         } elseif ($type === 'NULL') {
             $value = null;
         } elseif ($type === 'array') {
-            $value = \json_encode($value, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION);
+            $value = \json_encode($value,
+                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION);
         }
 
         return [$value, $map[$type]];
@@ -336,7 +337,7 @@ class Builder
                         $data = \array_values($value);
 
                         if (\is_array($data[0])) {
-                            if (isset($value[SQL::AND]) || isset($value[SQL::OR])) {
+                            if (isset($value[SQL:: AND]) || isset($value[SQL:: OR])) {
                                 $connector = ' ' . \array_keys($value)[0] . ' ';
                                 $value = $data[0];
                             }
@@ -345,7 +346,7 @@ class Builder
                         $like = [];
 
                         foreach ($value as $index => $item) {
-                            $item = (string)$item;
+                            $item = (string) $item;
 
                             if (!\preg_match('/(\[.+\]|_|%.+|.+%)/', $item)) {
                                 $item = '%' . $item . '%';
@@ -415,38 +416,64 @@ class Builder
         return \implode($conjunctor . ' ', $stack);
     }
 
-    protected function suffixClause(array $struct, &$map): string
+    /**
+     * @param array|Raw $struct
+     * @param array     $map
+     *
+     * @return string
+     */
+    protected function whereClause($struct, array &$map): string
     {
-        $where = $struct[SQL::WHERE] ?? [];
-        foreach ([SQL::GROUP, SQL::ORDER, SQL::LIMIT, SQL::HAVING, SQL::LIKE, SQL::MATCH] as $v) {
-            if (isset($struct[$v]) && !isset($where[$v])) {
-                $where[$v] = $struct[$v];
+        if (\is_array($struct)) {
+            if (!isset($struct[SQL::WHERE])) {
+                static $keys = [SQL::GROUP, SQL::ORDER, SQL::LIMIT, SQL::HAVING, SQL::MATCH];
+
+                $temp = [];
+                foreach ($keys as $key) {
+                    if (isset($struct[$key])) {
+                        $temp[$key] = $struct[$key];
+                        unset($struct[$key]);
+                    }
+                }
+                $temp[SQL::WHERE] = $struct;
+
+                $struct = $temp;
             }
+
+            return $this->suffixClause($struct, $map);
         }
 
-        return $this->whereClause($where, $map);
+        if ($raw = $this->buildRaw($struct, $map)) {
+            return $raw;
+        }
+
+        throw new \InvalidArgumentException('Where clause must be array or ' . Raw::class);
     }
 
-    protected function whereClause(array $where, array &$map): string
+    protected function suffixClause(array $struct, array &$map): string
     {
-        if (empty($where)) {
+        if (empty($struct)) {
             return '';
         }
 
         $clause = '';
-        if (\is_array($where)) {
-            $conditions = \array_diff_key($where, \array_flip(
-                [SQL::GROUP, SQL::ORDER, SQL::HAVING, SQL::LIMIT, SQL::LIKE, SQL::MATCH]
-            ));
-
-            if (!empty($conditions)) {
-                $clause = ' WHERE ' . $this->dataImplode($conditions, $map, ' AND');
+        if (isset($struct[SQL::WHERE])) {
+            $where = $struct[SQL::WHERE];
+            if (\is_array($where)) {
+                if (!empty($where)) {
+                    $clause = ' WHERE ' . $this->dataImplode($where, $map, ' AND');
+                }
+            } elseif ($raw = $this->buildRaw($where, $map)) {
+                $clause .= ' ' . $raw;
             }
+        }
 
-            if (isset($where[SQL::MATCH]) && $this->type === 'mysql') {
-                $MATCH = $where[SQL::MATCH];
+        if (isset($struct[SQL::MATCH]) && $this->type === 'mysql') {
+            $MATCH = $struct[SQL::MATCH];
 
-                if (\is_array($MATCH) && isset($MATCH['columns'], $MATCH['keyword'])) {
+            $matchClause = '';
+            if (\is_array($MATCH)) {
+                if (isset($MATCH['columns'], $MATCH['keyword'])) {
                     $mode = '';
 
                     static $mode_array = [
@@ -464,72 +491,79 @@ class Builder
                     $mapKey = $this->mapKey();
                     $map[$mapKey] = [$MATCH['keyword'], PDO::PARAM_STR];
 
-                    $clause .= ($clause !== '' ? ' AND ' : ' WHERE') . ' MATCH (' . $columns . ') AGAINST (' . $mapKey . $mode . ')';
+                    $matchClause = ' MATCH (' . $columns . ') AGAINST (' . $mapKey . $mode . ')';
                 }
+            } elseif ($raw = $this->buildRaw($MATCH, $map)) {
+                $matchClause = $raw;
             }
 
-            if (isset($where[SQL::GROUP])) {
-                $GROUP = $where[SQL::GROUP];
+            if ($matchClause !== '') {
+                $clause .= ($clause !== '' ? ' AND ' : ' WHERE ') . $matchClause;
+            }
+        }
 
-                if (\is_array($GROUP)) {
-                    $clause .= ' GROUP BY ' . \implode(',', \array_map([$this, 'columnQuote'], $GROUP));
-                } elseif ($raw = $this->buildRaw($GROUP, $map)) {
-                    $clause .= ' GROUP BY ' . $raw;
+        if (isset($struct[SQL::GROUP])) {
+            $GROUP = $struct[SQL::GROUP];
+
+            if (\is_array($GROUP)) {
+                $clause .= ' GROUP BY ' . \implode(',', \array_map([$this, 'columnQuote'], $GROUP));
+            } elseif ($raw = $this->buildRaw($GROUP, $map)) {
+                $clause .= ' GROUP BY ' . $raw;
+            } else {
+                $clause .= ' GROUP BY ' . $this->columnQuote($GROUP);
+            }
+
+            if (isset($struct[SQL::HAVING])) {
+                $HAVING = $struct[SQL::HAVING];
+                if ($raw = $this->buildRaw($HAVING, $map)) {
+                    $clause .= ' HAVING ' . $raw;
                 } else {
-                    $clause .= ' GROUP BY ' . $this->columnQuote($GROUP);
-                }
-
-                if (isset($where[SQL::HAVING])) {
-                    $HAVING = $where[SQL::HAVING];
-                    if ($raw = $this->buildRaw($HAVING, $map)) {
-                        $clause .= ' HAVING ' . $raw;
-                    } else {
-                        $clause .= ' HAVING ' . $this->dataImplode($HAVING, $map, ' AND');
-                    }
+                    $clause .= ' HAVING ' . $this->dataImplode($HAVING, $map, ' AND');
                 }
             }
+        }
 
-            $LIMIT = $where[SQL::LIMIT] ?? null;
+        if (isset($struct[SQL::ORDER])) {
+            $ORDER = $struct[SQL::ORDER];
 
-            if (isset($where[SQL::ORDER])) {
-                $ORDER = $where[SQL::ORDER];
+            if (\is_array($ORDER)) {
+                $stack = [];
 
-                if (\is_array($ORDER)) {
-                    $stack = [];
-
-                    foreach ($ORDER as $column => $value) {
-                        if (\is_array($value)) {
-                            $stack[] = 'FIELD(' . $this->columnQuote($column) . ', ' . $this->arrayQuote($value, $map) . ')';
-                        } elseif ($value === 'ASC' || $value === 'DESC') {
-                            $stack[] = $this->columnQuote($column) . ' ' . $value;
-                        } elseif (\is_int($column)) {
-                            $stack[] = $this->columnQuote($value);
-                        }
-                    }
-
-                    $clause .= ' ORDER BY ' . implode($stack, ',');
-                } elseif ($raw = $this->buildRaw($ORDER, $map)) {
-                    $clause .= ' ORDER BY ' . $raw;
-                } else {
-                    $clause .= ' ORDER BY ' . $this->columnQuote($ORDER);
-                }
-
-                if (null !== $LIMIT && \in_array($this->type, ['oracle', 'mssql'], true)) {
-                    if (\is_numeric($LIMIT)) {
-                        $LIMIT = [0, $LIMIT];
-                    }
-
-                    if (
-                        \is_array($LIMIT) &&
-                        \is_numeric($LIMIT[0]) &&
-                        \is_numeric($LIMIT[1])
-                    ) {
-                        $clause .= ' OFFSET ' . $LIMIT[0] . ' ROWS FETCH NEXT ' . $LIMIT[1] . ' ROWS ONLY';
+                foreach ($ORDER as $column => $value) {
+                    if (\is_array($value)) {
+                        $stack[] = 'FIELD(' . $this->columnQuote($column) . ', ' . $this->arrayQuote($value,
+                                $map) . ')';
+                    } elseif ($value === 'ASC' || $value === 'DESC') {
+                        $stack[] = $this->columnQuote($column) . ' ' . $value;
+                    } elseif (\is_int($column)) {
+                        $stack[] = $this->columnQuote($value);
                     }
                 }
+
+                $clause .= ' ORDER BY ' . \implode(',', $stack);
+            } elseif ($raw = $this->buildRaw($ORDER, $map)) {
+                $clause .= ' ORDER BY ' . $raw;
+            } else {
+                $clause .= ' ORDER BY ' . $this->columnQuote($ORDER);
             }
+        }
 
-            if (null !== $LIMIT && !\in_array($this->type, ['oracle', 'mssql'], true)) {
+        if (isset($struct[SQL::LIMIT])) {
+            $LIMIT = $struct[SQL::LIMIT];
+
+            if (\in_array($this->type, ['oracle', 'mssql'], true)) {
+                if (\is_numeric($LIMIT)) {
+                    $LIMIT = [0, $LIMIT];
+                }
+
+                if (
+                    \is_array($LIMIT) &&
+                    \is_numeric($LIMIT[0]) &&
+                    \is_numeric($LIMIT[1])
+                ) {
+                    $clause .= ' OFFSET ' . $LIMIT[0] . ' ROWS FETCH NEXT ' . $LIMIT[1] . ' ROWS ONLY';
+                }
+            } else {
                 if (\is_numeric($LIMIT)) {
                     $clause .= ' LIMIT ' . $LIMIT;
                 } elseif (
@@ -540,8 +574,6 @@ class Builder
                     $clause .= ' LIMIT ' . $LIMIT[1] . ' OFFSET ' . $LIMIT[0];
                 }
             }
-        } elseif ($raw = $this->buildRaw($where, $map)) {
-            $clause .= ' ' . $raw;
         }
 
         return $clause;
@@ -791,7 +823,7 @@ class Builder
     /**
      * @param       $table
      * @param array $data
-     * @param mixed $where
+     * @param array|Raw|null $where
      *
      * @return array
      */
@@ -830,14 +862,14 @@ class Builder
         }
 
         $sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' . \implode(', ', $fields) .
-            $this->suffixClause($where, $map);
+            $this->whereClause($where, $map);
 
         return [$sql, $map];
     }
 
     /**
      * @param string|array $table
-     * @param array|null   $where
+     * @param array|Raw|null   $where
      *
      * @return array
      */
@@ -851,15 +883,15 @@ class Builder
             $where = [SQL::WHERE => $where];
         }
 
-        $sql = 'DELETE FROM ' . $this->tableQuote($table) . $this->suffixClause($where, $map);
+        $sql = 'DELETE FROM ' . $this->tableQuote($table) . $this->whereClause($where, $map);
 
         return [$sql, $map];
     }
 
     /**
-     * @param array|string $table
-     * @param array|null   $columns
-     * @param array|null   $where
+     * @param array|string   $table
+     * @param array|null     $columns
+     * @param array|Raw|null $where
      *
      * @return array|null
      */
@@ -898,7 +930,7 @@ class Builder
         }
 
         $sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' .
-            \implode(', ', $stack) . $this->suffixClause($where, $map);
+            \implode(', ', $stack) . $this->whereClause($where, $map);
 
         return [$sql, $map];
     }
