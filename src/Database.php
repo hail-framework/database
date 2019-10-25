@@ -6,6 +6,7 @@
 
 namespace Hail\Database;
 
+use Hail\Database\Sql\SQL;
 use PDO;
 use PDOStatement;
 use Hail\Database\Sql\Builder;
@@ -352,7 +353,7 @@ class Database
         $pdo = $this->pdo ?? $this->getPdo();
 
         if ($this->debug) {
-            echo $this->generate($query, $map);
+            echo $this->sql->generate($query, $map);
 
             $this->debug = false;
 
@@ -482,7 +483,7 @@ class Database
      *
      * @return \Generator
      */
-    public function getRow($struct, $fetch = PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
+    public function fetch($struct, $fetch = PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
     {
         [$sql, $map] = $this->sql->select($struct);
 
@@ -611,21 +612,24 @@ class Database
 
         $query = $this->exec($sql, $map, $fetchArgs);
 
-        $return = null;
-        if ($query) {
-            $return = $query->fetch($fetch);
+        if ($query === null) {
+            return null;
+        }
 
-            if (\is_array($return) && !empty($return)) {
-                $column = $this->sql->getColumns($struct);
+        $return = $query->fetch($fetch);
 
-                if (\is_string($column)) {
-                    if ($column !== '*') {
-                        $return = $return[$column];
-                    }
-                } elseif (\is_array($column) && \count($column) === 1) {
-                    $return = $return[\current($column)];
-                }
-            }
+        if (empty($return)) {
+            return null;
+        }
+
+        $column = $struct[SQL::SELECT] ?? $struct[SQL::COLUMNS] ?? null;
+
+        if (\is_string($column) && $column !== '*') {
+            return $return[$column];
+        }
+
+        if (\is_array($column) && \count($column) === 1) {
+            return $return[\current($column)];
         }
 
         return $return;
@@ -785,38 +789,5 @@ class Database
         $output['dsn'] = $this->dsn[0];
 
         return $output;
-    }
-
-    public function generate(string $query, array $map): string
-    {
-        $identifier = [
-            'mysql' => '`$1`',
-            'mariadb' => '`$1`',
-            'mssql' => '[$1]',
-        ];
-
-        $query = \preg_replace(
-            '/"(\w+)"/',
-            $identifier[$this->type] ?? '"$1"',
-            $query
-        );
-
-        $pdo = $this->pdo ?? $this->getPdo();
-
-        foreach ($map as $key => $value) {
-            if ($value[1] === PDO::PARAM_STR) {
-                $replace = $pdo->quote($value[0]);
-            } elseif ($value[1] === PDO::PARAM_NULL) {
-                $replace = 'NULL';
-            } elseif ($value[1] === PDO::PARAM_LOB) {
-                $replace = '{LOB_DATA}';
-            } else {
-                $replace = $value[0];
-            }
-
-            $query = \str_replace($key, $replace, $query);
-        }
-
-        return $query;
     }
 }

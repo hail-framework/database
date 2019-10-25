@@ -9,7 +9,7 @@ namespace Hail\Database\Sql;
 use PDO;
 
 /**
- * SQL builder from Medoo
+ * SQL builder like Medoo
  *
  * @package Hail\Database
  * @author  FENG Hao <flyinghail@msn.com>
@@ -36,17 +36,24 @@ class Builder
      */
     protected $guid = 0;
 
+    /**
+     * @var string
+     */
+    protected $sql;
+
+    /**
+     * @var array
+     */
+    protected $map;
+
     public function __construct(string $type, string $prefix = null)
     {
-        $this->type = $type;
-
-        if ($this->type === 'mariadb') {
-            $this->type = 'mysql';
-        }
-
-        if ($this->type === 'mysql') {
+        if ($type === 'mariadb' || $type === 'mysql') {
+            $type = 'mysql';
             $this->quote = '`';
         }
+
+        $this->type = $type;
 
         if ($prefix) {
             $this->prefix = $prefix;
@@ -58,7 +65,7 @@ class Builder
         return new Raw($string, $map);
     }
 
-    public function buildRaw($raw, &$map)
+    public function buildRaw($raw): ?string
     {
         if (!$raw instanceof Raw) {
             return null;
@@ -74,7 +81,7 @@ class Builder
 
         if (!empty($rawMap)) {
             foreach ($rawMap as $key => $value) {
-                $map[$key] = $this->typeMap($value);
+                $this->map[$key] = $this->typeMap($value);
             }
         }
 
@@ -90,22 +97,20 @@ class Builder
         return $this->columnQuote($matches[3]);
     }
 
-    protected function typeMap($value, string $type = null): array
+    protected function typeMap($value): array
     {
         static $map = [
             'NULL' => PDO::PARAM_NULL,
             'integer' => PDO::PARAM_INT,
-            'double' => PDO::PARAM_STR,
             'boolean' => PDO::PARAM_BOOL,
-            'string' => PDO::PARAM_STR,
-            'object' => PDO::PARAM_STR,
             'resource' => PDO::PARAM_LOB,
-            'array' => PDO::PARAM_STR,
+//            'object' => PDO::PARAM_STR,
+//            'double' => PDO::PARAM_STR,
+//            'string' => PDO::PARAM_STR,
+//            'array' => PDO::PARAM_STR,
         ];
 
-        if ($type === null) {
-            $type = \gettype($value);
-        }
+        $type = \gettype($value);
 
         if ($type === 'boolean') {
             $value = ($value ? '1' : '0');
@@ -113,10 +118,11 @@ class Builder
             $value = null;
         } elseif ($type === 'array') {
             $value = \json_encode($value,
-                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION);
+                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION
+            );
         }
 
-        return [$value, $map[$type]];
+        return [$value, $map[$type] ?? PDO::PARAM_STR];
     }
 
     /**
@@ -141,6 +147,22 @@ class Builder
         $this->quote = $quote;
 
         return $this;
+    }
+
+    /**
+     * @return string
+     */
+    public function getSql(): string
+    {
+        return $this->sql ?? '';
+    }
+
+    /**
+     * @return array
+     */
+    public function getMap(): array
+    {
+        return $this->map ?? [];
     }
 
     protected function tableQuote($table)
@@ -181,7 +203,7 @@ class Builder
         return $quote . $string . $quote;
     }
 
-    protected function columnPush(&$columns, &$map)
+    protected function columnPush(&$columns)
     {
         if ($columns === '*') {
             return $columns;
@@ -194,8 +216,8 @@ class Builder
         $stack = [];
         foreach ($columns as $key => $value) {
             if (\is_array($value)) {
-                $stack[] = $this->columnPush($value, $map);
-            } elseif (!\is_int($key) && $raw = $this->buildRaw($value, $map)) {
+                $stack[] = $this->columnPush($value);
+            } elseif (!\is_int($key) && $raw = $this->buildRaw($value)) {
                 \preg_match('/(?<column>[a-zA-Z0-9_\.]+)(\s*\[(?<type>(String|Bool|Int|Number))\])?/i', $key, $match);
 
                 $stack[] = $raw . ' AS ' . $this->columnQuote($match['column']);
@@ -221,30 +243,30 @@ class Builder
     }
 
 
-    protected function arrayQuote(array $array, array &$map): string
+    protected function arrayQuote(array $array): string
     {
         $key = $this->mapKey();
 
         $temp = [];
         foreach ($array as $i => $value) {
             $temp[] = $key . 'O' . $i;
-            $map[$key . 'O' . $i] = $this->typeMap($value);
+            $this->map[$key . 'O' . $i] = $this->typeMap($value);
         }
 
         return \implode(',', $temp);
     }
 
-    protected function innerConjunct(array $data, array $map, string $conjunctor, string $outerConjunctor): string
+    protected function innerConjunct(array $data, string $conjunctor, string $outerConjunctor): string
     {
         $stack = [];
         foreach ($data as $value) {
-            $stack[] = '(' . $this->dataImplode($value, $map, $conjunctor) . ')';
+            $stack[] = '(' . $this->dataImplode($value, $conjunctor) . ')';
         }
 
         return \implode($outerConjunctor . ' ', $stack);
     }
 
-    protected function dataImplode(array $data, array &$map, string $conjunctor)
+    protected function dataImplode(array $data, string $conjunctor)
     {
         $stack = [];
 
@@ -258,8 +280,8 @@ class Builder
                 $relationship = $relation_match[1];
 
                 $stack[] = $value !== \array_keys(\array_keys($value)) ?
-                    '(' . $this->dataImplode($value, $map, ' ' . $relationship) . ')' :
-                    '(' . $this->innerConjunct($value, $map, ' ' . $relationship, $conjunctor) . ')';
+                    '(' . $this->dataImplode($value, ' ' . $relationship) . ')' :
+                    '(' . $this->innerConjunct($value, ' ' . $relationship, $conjunctor) . ')';
 
                 continue;
             }
@@ -284,12 +306,12 @@ class Builder
 
                         if (\is_numeric($value)) {
                             $condition .= $mapKey;
-                            $map[$mapKey] = [$value, PDO::PARAM_INT];
+                            $this->map[$mapKey] = [$value, PDO::PARAM_INT];
                         } elseif ($raw = $this->buildRaw($value, $map)) {
                             $condition .= $raw;
                         } else {
                             $condition .= $mapKey;
-                            $map[$mapKey] = [$value, PDO::PARAM_STR];
+                            $this->map[$mapKey] = [$value, PDO::PARAM_STR];
                         }
 
                         $stack[] = $condition;
@@ -304,14 +326,14 @@ class Builder
 
                                 foreach ($value as $index => $item) {
                                     $placeholders[] = $mapKey . $index . '_i';
-                                    $map[$mapKey . $index . '_i'] = $this->typeMap($item);
+                                    $this->map[$mapKey . $index . '_i'] = $this->typeMap($item);
                                 }
 
                                 $stack[] = $column . ' NOT IN (' . \implode(', ', $placeholders) . ')';
                                 break;
 
                             case 'object':
-                                if ($raw = $this->buildRaw($value, $map)) {
+                                if ($raw = $this->buildRaw($value)) {
                                     if (\strpos($raw, 'SELECT') === 0) {
                                         $stack[] = $column . ' NOT IN (' . $raw . ')';
                                     } else {
@@ -325,7 +347,7 @@ class Builder
                             case 'boolean':
                             case 'string':
                                 $stack[] = $column . ' != ' . $mapKey;
-                                $map[$mapKey] = $this->typeMap($value, $type);
+                                $this->map[$mapKey] = $this->typeMap($value, $type);
                                 break;
                         }
                     } elseif ($operator === '~' || $operator === '!~') {
@@ -353,7 +375,7 @@ class Builder
                             }
 
                             $like[] = $column . ($operator === '!~' ? ' NOT' : '') . ' LIKE ' . $mapKey . 'L' . $index;
-                            $map[$mapKey . 'L' . $index] = [$item, PDO::PARAM_STR];
+                            $this->map[$mapKey . 'L' . $index] = [$item, PDO::PARAM_STR];
                         }
 
                         $stack[] = '(' . \implode($connector, $like) . ')';
@@ -367,12 +389,12 @@ class Builder
 
                             $dataType = (\is_numeric($value[0]) && \is_numeric($value[1])) ? PDO::PARAM_INT : PDO::PARAM_STR;
 
-                            $map[$mapKey . 'a'] = [$value[0], $dataType];
-                            $map[$mapKey . 'b'] = [$value[1], $dataType];
+                            $this->map[$mapKey . 'a'] = [$value[0], $dataType];
+                            $this->map[$mapKey . 'b'] = [$value[1], $dataType];
                         }
                     } elseif ($operator === 'REGEXP') {
                         $stack[] = $column . ' REGEXP ' . $mapKey;
-                        $map[$mapKey] = [$value, PDO::PARAM_STR];
+                        $this->map[$mapKey] = [$value, PDO::PARAM_STR];
                     }
                 } else {
                     switch ($type) {
@@ -385,14 +407,14 @@ class Builder
 
                             foreach ($value as $index => $item) {
                                 $placeholders[] = $mapKey . $index . '_i';
-                                $map[$mapKey . $index . '_i'] = $this->typeMap($item);
+                                $this->map[$mapKey . $index . '_i'] = $this->typeMap($item);
                             }
 
                             $stack[] = $column . ' IN (' . \implode(', ', $placeholders) . ')';
                             break;
 
                         case 'object':
-                            if ($raw = $this->buildRaw($value, $map)) {
+                            if ($raw = $this->buildRaw($value)) {
                                 if (\strpos($raw, 'SELECT') === 0) {
                                     $stack[] = $column . ' IN (' . $raw . ')';
                                 } else {
@@ -406,7 +428,7 @@ class Builder
                         case 'boolean':
                         case 'string':
                             $stack[] = $column . ' = ' . $mapKey;
-                            $map[$mapKey] = $this->typeMap($value, $type);
+                            $this->map[$mapKey] = $this->typeMap($value, $type);
                             break;
                     }
                 }
@@ -418,11 +440,10 @@ class Builder
 
     /**
      * @param array|Raw $struct
-     * @param array     $map
      *
      * @return string
      */
-    protected function whereClause($struct, array &$map): string
+    protected function whereClause($struct): string
     {
         if (\is_array($struct)) {
             if (!isset($struct[SQL::WHERE])) {
@@ -440,17 +461,17 @@ class Builder
                 $struct = $temp;
             }
 
-            return $this->suffixClause($struct, $map);
+            return $this->suffixClause($struct);
         }
 
-        if ($raw = $this->buildRaw($struct, $map)) {
+        if ($raw = $this->buildRaw($struct)) {
             return $raw;
         }
 
         throw new \InvalidArgumentException('Where clause must be array or ' . Raw::class);
     }
 
-    protected function suffixClause(array $struct, array &$map): string
+    protected function suffixClause(array $struct): string
     {
         if (empty($struct)) {
             return '';
@@ -461,9 +482,9 @@ class Builder
             $where = $struct[SQL::WHERE];
             if (\is_array($where)) {
                 if (!empty($where)) {
-                    $clause = ' WHERE ' . $this->dataImplode($where, $map, ' AND');
+                    $clause = ' WHERE ' . $this->dataImplode($where, ' AND');
                 }
-            } elseif ($raw = $this->buildRaw($where, $map)) {
+            } elseif ($raw = $this->buildRaw($where)) {
                 $clause .= ' ' . $raw;
             }
         }
@@ -489,11 +510,11 @@ class Builder
 
                     $columns = \implode(', ', \array_map([$this, 'columnQuote'], $MATCH['columns']));
                     $mapKey = $this->mapKey();
-                    $map[$mapKey] = [$MATCH['keyword'], PDO::PARAM_STR];
+                    $this->map[$mapKey] = [$MATCH['keyword'], PDO::PARAM_STR];
 
                     $matchClause = ' MATCH (' . $columns . ') AGAINST (' . $mapKey . $mode . ')';
                 }
-            } elseif ($raw = $this->buildRaw($MATCH, $map)) {
+            } elseif ($raw = $this->buildRaw($MATCH)) {
                 $matchClause = $raw;
             }
 
@@ -507,7 +528,7 @@ class Builder
 
             if (\is_array($GROUP)) {
                 $clause .= ' GROUP BY ' . \implode(',', \array_map([$this, 'columnQuote'], $GROUP));
-            } elseif ($raw = $this->buildRaw($GROUP, $map)) {
+            } elseif ($raw = $this->buildRaw($GROUP)) {
                 $clause .= ' GROUP BY ' . $raw;
             } else {
                 $clause .= ' GROUP BY ' . $this->columnQuote($GROUP);
@@ -515,10 +536,10 @@ class Builder
 
             if (isset($struct[SQL::HAVING])) {
                 $HAVING = $struct[SQL::HAVING];
-                if ($raw = $this->buildRaw($HAVING, $map)) {
+                if ($raw = $this->buildRaw($HAVING)) {
                     $clause .= ' HAVING ' . $raw;
                 } else {
-                    $clause .= ' HAVING ' . $this->dataImplode($HAVING, $map, ' AND');
+                    $clause .= ' HAVING ' . $this->dataImplode($HAVING, ' AND');
                 }
             }
         }
@@ -531,8 +552,7 @@ class Builder
 
                 foreach ($ORDER as $column => $value) {
                     if (\is_array($value)) {
-                        $stack[] = 'FIELD(' . $this->columnQuote($column) . ', ' . $this->arrayQuote($value,
-                                $map) . ')';
+                        $stack[] = 'FIELD(' . $this->columnQuote($column) . ', ' . $this->arrayQuote($value) . ')';
                     } elseif ($value === 'ASC' || $value === 'DESC') {
                         $stack[] = $this->columnQuote($column) . ' ' . $value;
                     } elseif (\is_int($column)) {
@@ -541,7 +561,7 @@ class Builder
                 }
 
                 $clause .= ' ORDER BY ' . \implode(',', $stack);
-            } elseif ($raw = $this->buildRaw($ORDER, $map)) {
+            } elseif ($raw = $this->buildRaw($ORDER)) {
                 $clause .= ' ORDER BY ' . $raw;
             } else {
                 $clause .= ' ORDER BY ' . $this->columnQuote($ORDER);
@@ -581,33 +601,15 @@ class Builder
 
     protected function getTable(array $struct, string $key = null): string
     {
-        $table = $struct[SQL::TABLE] ?? $struct[SQL::FROM] ?? ($key ? $struct[$key] : null);
+        if ($key && isset($struct[$key])) {
+            return $struct[$key];
+        }
 
-        if (empty($table)) {
+        if (!isset($struct[SQL::TABLE])) {
             throw new \InvalidArgumentException('SQL array must contains table.');
         }
 
-        return $table;
-    }
-
-    public function getColumns(array $struct, bool $wildcard = true)
-    {
-        if (isset($struct[SQL::COLUMNS])) {
-            return $struct[SQL::COLUMNS];
-        }
-
-        if (
-            isset($struct[SQL::TABLE], $struct[SQL::SELECT]) ||
-            isset($struct[SQL::FROM], $struct[SQL::SELECT])
-        ) {
-            return $struct[SQL::SELECT];
-        }
-
-        if (!$wildcard) {
-            throw new \InvalidArgumentException('SQL array must contains columns');
-        }
-
-        return '*';
+        return $struct[SQL::TABLE];
     }
 
     /**
@@ -615,12 +617,28 @@ class Builder
      *
      * @return array
      */
-    private function struct($struct): array
+    private function selectFormat($struct): array
     {
         if (\is_string($struct)) {
-            $struct = [
-                SQL::TABLE => $struct,
-            ];
+            return [SQL::TABLE => $struct];
+        }
+
+        if (!isset($struct[SQL::FROM])) {
+            if (!isset($struct[SQL::TABLE])) {
+                throw new \InvalidArgumentException('SQL must contains table.');
+            }
+
+            $struct[SQL::FROM] = $struct[SQL::TABLE];
+            unset($struct[SQL::TABLE]);
+        }
+
+        if (!isset($struct[SQL::SELECT])) {
+            if (isset($struct[SQL::COLUMNS])) {
+                $struct[SQL::SELECT] = $struct[SQL::COLUMNS];
+                unset($struct[SQL::COLUMNS]);
+            } else {
+                $struct[SQL::SELECT] = '*';
+            }
         }
 
         return $struct;
@@ -633,10 +651,11 @@ class Builder
      */
     public function select($struct): array
     {
-        $struct = $this->struct($struct);
+        $struct = $this->selectFormat($struct);
 
-        $map = [];
-        $table = $this->getTable($struct);
+        $this->map = [];
+
+        $table = $struct[SQL::FROM];
         \preg_match('/(?<table>\w+)\s*\((?<alias>\w+)\)/i', $table, $tableMatch);
 
         if (isset($tableMatch['table'], $tableMatch['alias'])) {
@@ -708,23 +727,25 @@ class Builder
             $tableQuery .= ' ' . \implode(' ', $tableJoin);
         }
 
-        $columns = $this->getColumns($struct);
+        $columns = $struct[SQL::SELECT];
         if (isset($struct[SQL::FUN])) {
             $fn = $struct[SQL::FUN];
             if ($fn === 1 || $fn === '1') {
                 $column = '1';
-            } elseif ($raw = $this->buildRaw($fn, $map)) {
+            } elseif ($raw = $this->buildRaw($fn)) {
                 $column = $raw;
             } else {
-                $column = $fn . '(' . $this->columnPush($columns, $map) . ')';
+                $column = $fn . '(' . $this->columnPush($columns) . ')';
             }
         } else {
-            $column = $this->columnPush($columns, $map);
+            $column = $this->columnPush($columns);
         }
 
-        $sql = 'SELECT ' . $column . ' FROM ' . $tableQuery . $this->suffixClause($struct, $map);
+        $sql = 'SELECT ' . $column . ' FROM ' . $tableQuery . $this->suffixClause($struct);
 
-        return [$sql, $map];
+        $this->sql = $sql;
+
+        return [$sql, $this->map];
     }
 
     /**
@@ -784,7 +805,7 @@ class Builder
         $columns = \array_keys($datas[0]);
 
         $stack = [];
-        $map = [];
+        $this->map = [];
 
         foreach ($datas as $data) {
             if (\array_keys($data) !== $columns) {
@@ -793,7 +814,7 @@ class Builder
 
             $values = [];
             foreach ($columns as $key) {
-                if ($raw = $this->buildRaw($data[$key], $map)) {
+                if ($raw = $this->buildRaw($data[$key])) {
                     $values[] = $raw;
                     continue;
                 }
@@ -801,10 +822,10 @@ class Builder
                 $values[] = $mapKey = $this->mapKey();
 
                 if (!isset($data[$key])) {
-                    $map[$mapKey] = [null, PDO::PARAM_NULL];
+                    $this->map[$mapKey] = [null, PDO::PARAM_NULL];
                 } else {
                     $value = $data[$key];
-                    $map[$mapKey] = $this->typeMap($value);
+                    $this->map[$mapKey] = $this->typeMap($value);
                 }
 
             }
@@ -814,15 +835,15 @@ class Builder
 
         $columns = \array_map([$this, 'columnQuote'], $columns);
 
-        $sql = $INSERT . ' INTO ' . $this->tableQuote($table) .
+        $this->sql = $INSERT . ' INTO ' . $this->tableQuote($table) .
             ' (' . \implode(', ', $columns) . ') VALUES ' . \implode(', ', $stack);
 
-        return [$sql, $map];
+        return [$this->sql, $this->map];
     }
 
     /**
-     * @param       $table
-     * @param array $data
+     * @param                $table
+     * @param array          $data
      * @param array|Raw|null $where
      *
      * @return array
@@ -838,12 +859,12 @@ class Builder
         }
 
         $fields = [];
-        $map = [];
+        $this->map = [];
 
         foreach ($data as $key => $value) {
-            $column = $this->columnQuote(\preg_replace("/(\s*\[(\+|\-|\*|\/)\]$)/i", '', $key));
+            $column = $this->columnQuote(\preg_replace('/\s*\[[+\-*/]\]$/', '', $key));
 
-            if ($raw = $this->buildRaw($value, $map)) {
+            if ($raw = $this->buildRaw($value)) {
                 $fields[] = $column . ' = ' . $raw;
                 continue;
             }
@@ -857,25 +878,25 @@ class Builder
                 }
             } else {
                 $fields[] = $column . ' = ' . $mapKey;
-                $map[$mapKey] = $this->typeMap($value);
+                $this->map[$mapKey] = $this->typeMap($value);
             }
         }
 
-        $sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' . \implode(', ', $fields) .
-            $this->whereClause($where, $map);
+        $this->sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' . \implode(', ', $fields) .
+            $this->whereClause($where);
 
-        return [$sql, $map];
+        return [$this->sql, $this->map];
     }
 
     /**
-     * @param string|array $table
-     * @param array|Raw|null   $where
+     * @param string|array   $table
+     * @param array|Raw|null $where
      *
      * @return array
      */
     public function delete($table, $where = null): array
     {
-        $map = [];
+        $this->map = [];
         if (\is_array($table)) {
             $where = $table;
             $table = $this->getTable($table, SQL::DELETE);
@@ -883,9 +904,9 @@ class Builder
             $where = [SQL::WHERE => $where];
         }
 
-        $sql = 'DELETE FROM ' . $this->tableQuote($table) . $this->whereClause($where, $map);
+        $this->sql = 'DELETE FROM ' . $this->tableQuote($table) . $this->whereClause($where);
 
-        return [$sql, $map];
+        return [$this->sql, $this->map];
     }
 
     /**
@@ -898,9 +919,18 @@ class Builder
     public function replace($table, array $columns = null, array $where = null): ?array
     {
         if (\is_array($table)) {
-            $columns = $this->getColumns($table, false);
-            $table = $this->getTable($table);
             $where = $table;
+
+            $table = $where[SQL::UPDATE] ?? $where[SQL::TABLE] ?? null;
+            if ($table === null) {
+                throw new \InvalidArgumentException('SQL must contains table.');
+            }
+
+            $columns = $where[SQL::SET] ?? $where[SQL::VALUES] ?? null;
+            if ($columns === null) {
+                throw new \InvalidArgumentException('SQL must contains columns');
+            }
+
         } elseif ($where) {
             $where = [SQL::WHERE => $where];
         }
@@ -909,7 +939,7 @@ class Builder
             return null;
         }
 
-        $map = [];
+        $this->map = [];
         $stack = [];
 
         foreach ($columns as $column => $replacements) {
@@ -919,8 +949,8 @@ class Builder
 
                     $stack[] = $this->columnQuote($column) . ' = REPLACE(' . $this->columnQuote($column) . ', ' . $mapKey . 'a, ' . $mapKey . 'b)';
 
-                    $map[$mapKey . 'a'] = [$old, PDO::PARAM_STR];
-                    $map[$mapKey . 'b'] = [$new, PDO::PARAM_STR];
+                    $this->map[$mapKey . 'a'] = [$old, PDO::PARAM_STR];
+                    $this->map[$mapKey . 'b'] = [$new, PDO::PARAM_STR];
                 }
             }
         }
@@ -929,10 +959,10 @@ class Builder
             return null;
         }
 
-        $sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' .
-            \implode(', ', $stack) . $this->whereClause($where, $map);
+        $this->sql = 'UPDATE ' . $this->tableQuote($table) . ' SET ' .
+            \implode(', ', $stack) . $this->whereClause($where);
 
-        return [$sql, $map];
+        return [$this->sql, $this->map];
     }
 
     /**
@@ -950,13 +980,13 @@ class Builder
             $struct[SQL::FUN] = 1;
         }
 
-        [$sql, $map] = $this->select($struct);
+        $this->select($struct);
 
         if ($this->type !== 'mssql') {
-            $sql = 'SELECT EXISTS(' . $sql . ')';
+            $this->sql = 'SELECT EXISTS(' . $this->sql . ')';
         }
 
-        return [$sql, $map];
+        return [$this->sql, $this->map];
     }
 
     /**
@@ -971,7 +1001,7 @@ class Builder
 
     public function rand($struct): array
     {
-        $struct = $this->struct($struct);
+        $struct = $this->selectFormat($struct);
 
         $type = $this->type;
         $order = 'RANDOM()';
@@ -984,5 +1014,48 @@ class Builder
         $struct[SQL::ORDER] = $this->raw($order);
 
         return $struct;
+    }
+
+    public function escape(string $string): string
+    {
+        return \str_replace(
+            ['\\', "\x00", "\n", "\r", '\'', '"', "\x1a"],
+            ['\\\\', '\\0', '\n', '\r', '\\\'', '\"', '\Z'],
+            $string
+        );
+    }
+
+    public function generate(string $query, array $map): string
+    {
+        if ($this->type === 'mssql') {
+            $query = \preg_replace('/"(\w+)"/', '[$1]', $query);
+        }
+
+        foreach ($map as $key => $value) {
+            if ($value[1] === PDO::PARAM_STR) {
+                $replace = '\'' . $this->escape($value[0]) . '\'';
+            } elseif ($value[1] === PDO::PARAM_NULL) {
+                $replace = 'NULL';
+            } elseif ($value[1] === PDO::PARAM_LOB) {
+                $replace = '\'' . $this->escape(
+                    \stream_get_contents($value[0])
+                ) . '\'';
+            } else {
+                $replace = $value[0];
+            }
+
+            $query = \str_replace($key, $replace, $query);
+        }
+
+        return $query;
+    }
+
+    public function __toString(): string
+    {
+        if (empty($this->sql)) {
+            return '';
+        }
+
+        return $this->generate($this->sql, $this->map);
     }
 }

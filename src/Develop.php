@@ -35,7 +35,7 @@ class Develop extends Database
 
     public function exec(string $query, array $map = [], array $fetchArgs = null): ?\PDOStatement
     {
-        $this->event('sql', $this->generate($query, $map));
+        $this->event('sql', $this->sql->generate($query, $map));
         $return = parent::exec($query, $map, $fetchArgs);
         $this->event('query');
 

@@ -41,7 +41,7 @@ interface CachedDBInterface
      *
      * @return \Generator
      */
-    public function selectRow($struct, $fetch = \PDO::FETCH_ASSOC, $fetchArgs = null): \Generator;
+    public function fetch($struct, $fetch = \PDO::FETCH_ASSOC, $fetchArgs = null): \Generator;
 
     /**
      * @param array|string $struct

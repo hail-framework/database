@@ -262,8 +262,8 @@ abstract class Model
         $this->defaultTable();
         $this->sql[SQL::VALUES] = $this->dirty;
 
-        if ($return = $this->db->insert($this->sql)) {
-            $this->__set($this->primary, $return);
+        if ($this->db->insert($this->sql)) {
+            $this->__set($this->primary, $this->db->id());
 
             return $this->dirty()->reset();
         }

@@ -61,7 +61,7 @@ abstract class AbstractCache implements CachedDBInterface
             return $this->name = $name;
         }
 
-        return $this->name = \sha1(\Serializer::encode([$name, $arguments]));
+        return $this->name = \sha1(\serialize([$name, $arguments]));
     }
 
     /**
@@ -124,16 +124,16 @@ abstract class AbstractCache implements CachedDBInterface
      *
      * @return \Generator
      */
-    public function selectRow($struct, $fetch = \PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
+    public function fetch($struct, $fetch = \PDO::FETCH_ASSOC, $fetchArgs = null): \Generator
     {
         $lifetime = $this->lifetime;
         $rowLifetime = $lifetime ? $lifetime + 5 : 0;
 
-        $key = $this->key('selectRow', [$struct, $fetch, $fetchArgs]);
+        $key = $this->key('fetch', [$struct, $fetch, $fetchArgs]);
 
         $countCache = $this->name($key . '_count')->doGet();
         if (($count = $this->getResult($countCache)) === null) {
-            $rows = $this->db->selectRow($struct, $fetch, $fetchArgs);
+            $rows = $this->db->fetch($struct, $fetch, $fetchArgs);
             if (!$rows->valid()) {
                 $this->reset();
 
@@ -144,7 +144,7 @@ abstract class AbstractCache implements CachedDBInterface
             foreach ($rows as $row) {
                 yield $row;
 
-                $this->name($key . '_' . (string) $index++)
+                $this->name($key . '_' . $index++)
                     ->expiresAfter($rowLifetime)
                     ->doSave($row);
             }
@@ -155,8 +155,7 @@ abstract class AbstractCache implements CachedDBInterface
         } else {
             for ($i = 0; $i < $count; ++$i) {
                 yield $this->getResult(
-                    $this->name($key . '_' . (string) $i)
-                        ->doGet()
+                    $this->name($key . '_' . $i)->doGet()
                 );
             }
         }
