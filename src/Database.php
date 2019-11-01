@@ -41,7 +41,15 @@ class Database
      */
     protected $sql;
 
+    /**
+     * @var bool
+     */
     protected $debug = false;
+
+    /**
+     * @var array|null
+     */
+    protected $errorInfo;
 
     /**
      * @var array
@@ -329,7 +337,7 @@ class Database
 
     /**
      * @param string $query
-     * @param array $map
+     * @param array  $map
      *
      * @return PDOStatement|null
      */
@@ -343,8 +351,8 @@ class Database
 
     /**
      * @param string $query
-     * @param array $map
-     * @param array $fetchArgs
+     * @param array  $map
+     * @param array  $fetchArgs
      *
      * @return PDOStatement|null
      */
@@ -367,22 +375,32 @@ class Database
             try {
                 $statement = $pdo->prepare($query);
 
-                if ($statement) {
-                    $this->statement = $statement;
+                if (!$statement) {
+                    $this->errorInfo = $pdo->errorInfo();
+                    $this->statement = null;
 
-                    foreach ($map as $key => $value) {
-                        $statement->bindValue($key, $value[0], $value[1]);
-                    }
-
-                    if (!empty($fetchArgs)) {
-                        $statement->setFetchMode(...$fetchArgs);
-                    }
-
-                    if ($statement->execute()) {
-                        return $statement;
-                    }
+                    return null;
                 }
-            } catch (PDOException $e) {
+
+                $this->statement = $statement;
+
+                foreach ($map as $key => $value) {
+                    $statement->bindValue($key, $value[0], $value[1]);
+                }
+
+                if (!empty($fetchArgs)) {
+                    $statement->setFetchMode(...$fetchArgs);
+                }
+
+                if (!$statement->execute()) {
+                    $this->errorInfo = $statement->errorInfo();
+                    $this->statement = null;
+
+                    return null;
+                }
+
+                return $statement;
+            } catch (\PDOException $e) {
                 if ($retries === 0) {
                     $error = $e->getMessage();
                     if (
@@ -401,7 +419,6 @@ class Database
 
         return null;
     }
-
 
     /**
      * @param $string
@@ -425,21 +442,36 @@ class Database
         [$sql] = $this->sql->select($table);
         $query = $this->exec($sql);
 
-        $headers = null;
-        if ($query) {
-            $headers = [];
-            for ($i = 0, $n = $query->columnCount(); $i < $n; ++$i) {
-                $headers[] = $query->getColumnMeta($i);
-            }
+        if (!$query) {
+            return null;
+        }
+
+        $headers = [];
+        for ($i = 0, $n = $query->columnCount(); $i < $n; ++$i) {
+            $headers[] = $query->getColumnMeta($i);
         }
 
         return $headers;
     }
 
+    public function create(array $struct): ?PDOStatement
+    {
+        $sql = $this->sql->create($struct);
+
+        return $this->exec($sql);
+    }
+
+    public function drop(string $table): ?PDOStatement
+    {
+        $sql = $this->sql->drop($table);
+
+        return $this->exec($sql);
+    }
+
     /**
      * @param array|string $struct
-     * @param int $fetch
-     * @param mixed $fetchArgs
+     * @param int          $fetch
+     * @param mixed        $fetchArgs
      *
      * @return array|null
      */
@@ -448,28 +480,27 @@ class Database
         [$sql, $map] = $this->sql->select($struct);
         $query = $this->exec($sql, $map);
 
-        $return = null;
-        if ($query) {
-            if ($fetchArgs !== null && (
-                    ($fetch & PDO::FETCH_CLASS) ||
-                    ($fetch & PDO::FETCH_COLUMN) ||
-                    ($fetch & PDO::FETCH_FUNC)
-                )
-            ) {
-                $fetchArgs = (array) $fetchArgs;
-                $return = $query->fetchAll($fetch, ...$fetchArgs);
-            } else {
-                $return = $query->fetchAll($fetch);
-            }
+        if (!$query) {
+            return null;
         }
 
-        return $return;
+        if ($fetchArgs !== null && (
+                ($fetch & PDO::FETCH_CLASS) ||
+                ($fetch & PDO::FETCH_COLUMN) ||
+                ($fetch & PDO::FETCH_FUNC)
+            )
+        ) {
+            $fetchArgs = (array) $fetchArgs;
+            return $query->fetchAll($fetch, ...$fetchArgs);
+        }
+
+        return $query->fetchAll($fetch);
     }
 
     /**
      * @code
      *
-     *      $rows = $db->getRow($sql);
+     *      $rows = $db->fetch($sql);
      *      if (!$rows->valid()) {
      *          //error
      *      }
@@ -478,8 +509,8 @@ class Database
      *      }
      *
      * @param array|string $struct
-     * @param int $fetch
-     * @param mixed $fetchArgs
+     * @param int          $fetch
+     * @param mixed        $fetchArgs
      *
      * @return \Generator
      */
@@ -510,7 +541,7 @@ class Database
 
     /**
      * @param string|array $table
-     * @param array $data
+     * @param array        $data
      * @param string|array $INSERT
      *
      * @return PDOStatement|null
@@ -523,29 +554,39 @@ class Database
     }
 
     /**
-     * @return mixed
+     * @return int|null
      */
-    public function id()
+    public function id(): ?int
     {
+        if ($this->statement === null) {
+            return null;
+        }
+
         $type = $this->type;
 
         if ($type === 'oracle') {
-            return 0;
+            return null;
         }
 
         $pdo = $this->pdo ?? $this->getPdo();
 
         if ($type === 'pgsql') {
-            return $pdo->query('SELECT LASTVAL()')->fetchColumn();
+            $lastId = (int) $pdo->query('SELECT LASTVAL()')->fetchColumn();
+        } else {
+            $lastId = (int) $pdo->lastInsertId();
         }
 
-        return $pdo->lastInsertId();
+        if ($lastId !== 0) {
+            return $lastId;
+        }
+
+        return null;
     }
 
     /**
      * @param string|array $table
-     * @param array $data
-     * @param null $where
+     * @param array        $data
+     * @param null         $where
      *
      * @return PDOStatement|null
      */
@@ -558,7 +599,7 @@ class Database
 
     /**
      * @param string|array $table
-     * @param null $where
+     * @param null         $where
      *
      * @return PDOStatement|null
      */
@@ -571,8 +612,8 @@ class Database
 
     /**
      * @param string|array $table
-     * @param array|null $columns
-     * @param array|null $where
+     * @param array|null   $columns
+     * @param array|null   $where
      *
      * @return PDOStatement|null
      */
@@ -590,8 +631,8 @@ class Database
 
     /**
      * @param array|string $struct
-     * @param int $fetch
-     * @param mixed $fetchArgs
+     * @param int          $fetch
+     * @param mixed        $fetchArgs
      *
      * @return array|string|null
      */
@@ -612,7 +653,7 @@ class Database
 
         $query = $this->exec($sql, $map, $fetchArgs);
 
-        if ($query === null) {
+        if (!$query) {
             return null;
         }
 
@@ -645,10 +686,11 @@ class Database
         [$sql, $map] = $this->sql->has($struct);
         $query = $this->exec($sql, $map);
 
-        $return = false;
-        if ($query) {
-            $return = $query->fetchColumn();
+        if (!$query) {
+            return false;
         }
+
+        $return = $query->fetchColumn();
 
         return $return === '1' || $return === 1 || $return === true;
     }
@@ -667,13 +709,13 @@ class Database
 
         $query = $this->exec($sql, $map);
 
-        if ($query) {
-            $number = $query->fetchColumn();
-
-            return \is_numeric($number) ? (int) $number : $number;
+        if (!$query) {
+            return false;
         }
 
-        return false;
+        $number = $query->fetchColumn();
+
+        return \is_numeric($number) ? (int) $number : $number;
     }
 
     /**
@@ -733,9 +775,21 @@ class Database
      */
     public function truncate(string $table): ?PDOStatement
     {
-        $sql = $this->sql->truncate($table);
+        $array = $this->sql->truncate($table);
 
-        return $this->exec($sql);
+        $return = null;
+        foreach ($array as $sql) {
+            $result = $this->exec($sql);
+            if (!$result) {
+                return null;
+            }
+
+            if ($return === null) {
+                $return = $result;
+            }
+        }
+
+        return $return;
     }
 
     /**
@@ -766,9 +820,9 @@ class Database
         return $result;
     }
 
-    public function error(): array
+    public function error(): ?array
     {
-        return $this->statement ? $this->statement->errorInfo() : $this->pdo->errorInfo();
+        return $this->errorInfo;
     }
 
     public function info(): array

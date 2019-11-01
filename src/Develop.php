@@ -68,6 +68,24 @@ class Develop extends Database
         );
     }
 
+    public function create(array $struct): ?\PDOStatement
+    {
+        $this->event('start', Event::CREATE);
+
+        return $this->done(
+            parent::create($struct)
+        );
+    }
+
+    public function drop(string $table): ?\PDOStatement
+    {
+        $this->event('start', Event::DROP);
+
+        return $this->done(
+            parent::drop($table)
+        );
+    }
+
     public function select($struct, $fetch = \PDO::FETCH_ASSOC, $fetchArgs = null): ?array
     {
         $this->event('start', Event::SELECT);

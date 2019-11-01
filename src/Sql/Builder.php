@@ -189,6 +189,10 @@ class Builder
             return '*';
         }
 
+        if (!\preg_match('/^\w+(\.?\w+)?$/', $string)) {
+            throw new \InvalidArgumentException('Incorrect column name "' . $string . '"');
+        }
+
         $quote = $this->quote;
 
         if (($p = \strpos($string, '.')) !== false) { // table.column
@@ -203,7 +207,7 @@ class Builder
         return $quote . $string . $quote;
     }
 
-    protected function columnPush(&$columns)
+    protected function columnPush($columns, bool $isJoin = false): string
     {
         if ($columns === '*') {
             return $columns;
@@ -216,23 +220,28 @@ class Builder
         $stack = [];
         foreach ($columns as $key => $value) {
             if (\is_array($value)) {
-                $stack[] = $this->columnPush($value);
-            } elseif (!\is_int($key) && $raw = $this->buildRaw($value)) {
-                \preg_match('/(?<column>[a-zA-Z0-9_\.]+)(\s*\[(?<type>(String|Bool|Int|Number))\])?/i', $key, $match);
+                $stack[] = $this->columnPush($value, $isJoin);
+                continue;
+            }
 
-                $stack[] = $raw . ' AS ' . $this->columnQuote($match['column']);
-            } elseif (\is_int($key) && \is_string($value)) {
-                \preg_match('/(?<column>[a-zA-Z0-9_\.]+)(?:\s*\((?<alias>\w+)\))?(?:\s*\[(?<type>(?:String|Bool|Int|Number|Object|JSON))\])?/i',
-                    $value, $match);
+            if (!\is_int($key)) {
+                if ($raw = $this->buildRaw($value)) {
+                    $stack[] = $raw . ' AS ' . $this->columnQuote($key);
+                } elseif (\is_string($value)) {
+                    $stack[] = $this->columnQuote($key) . ' AS ' . $this->columnQuote($value);
+                }
+                continue;
+            }
+
+            if (\is_string($value)) {
+                if ($isJoin && \strpos($value, '*') !== false) {
+                    throw new \InvalidArgumentException('Cannot use table.* to select all columns while joining table');
+                }
+
+                \preg_match('/(?<column>[a-zA-Z0-9_\.]+)(?:\s*\((?<alias>\w+)\))?/i', $value, $match);
 
                 if (!empty($match['alias'])) {
                     $stack[] = $this->columnQuote($match['column']) . ' AS ' . $this->columnQuote($match['alias']);
-
-                    $columns[$key] = $match['alias'];
-
-                    if (!empty($match['type'])) {
-                        $columns[$key] .= ' [' . $match['type'] . ']';
-                    }
                 } else {
                     $stack[] = $this->columnQuote($match['column']);
                 }
@@ -306,8 +315,8 @@ class Builder
 
                         if (\is_numeric($value)) {
                             $condition .= $mapKey;
-                            $this->map[$mapKey] = [$value, PDO::PARAM_INT];
-                        } elseif ($raw = $this->buildRaw($value, $map)) {
+                            $this->map[$mapKey] = [$value, \is_float($value) ? PDO::PARAM_STR : PDO::PARAM_INT];
+                        } elseif ($raw = $this->buildRaw($value)) {
                             $condition .= $raw;
                         } else {
                             $condition .= $mapKey;
@@ -325,8 +334,9 @@ class Builder
                                 $placeholders = [];
 
                                 foreach ($value as $index => $item) {
-                                    $placeholders[] = $mapKey . $index . '_i';
-                                    $this->map[$mapKey . $index . '_i'] = $this->typeMap($item);
+                                    $selectKey = $mapKey . $index . '_i';
+                                    $placeholders[] = $selectKey;
+                                    $this->map[$selectKey] = $this->typeMap($item);
                                 }
 
                                 $stack[] = $column . ' NOT IN (' . \implode(', ', $placeholders) . ')';
@@ -406,8 +416,9 @@ class Builder
                             $placeholders = [];
 
                             foreach ($value as $index => $item) {
-                                $placeholders[] = $mapKey . $index . '_i';
-                                $this->map[$mapKey . $index . '_i'] = $this->typeMap($item);
+                                $selectKey = $mapKey . $index . '_i';
+                                $placeholders[] = $selectKey;
+                                $this->map[$selectKey] = $this->typeMap($item);
                             }
 
                             $stack[] = $column . ' IN (' . \implode(', ', $placeholders) . ')';
@@ -644,6 +655,56 @@ class Builder
         return $struct;
     }
 
+    public function create(array $struct): string
+    {
+        $table = $struct[SQL::CREATE] ?? $struct[SQL::TABLE] ?? null;
+        if ($table === null) {
+            throw new \InvalidArgumentException('SQL must be contains table');
+        }
+
+        $columns = $struct[SQL::COLUMNS] ?? null;
+        if ($columns === null) {
+            throw new \InvalidArgumentException('SQL must be contains columns');
+        }
+
+        $quote = $this->quote;
+
+        $stack = [];
+        foreach ($columns as $name => $definition) {
+            if (\is_int($name)) {
+                $stack[] = preg_replace('/\<(\w+)>/', $quote . '$1' . $quote, $definition);
+            } elseif (\is_array($definition)) {
+                $stack[] = $quote . $name . $quote. ' ' . implode(' ', $definition);
+            } elseif (\is_string($definition)) {
+                $stack[] = $quote . $name . $quote . ' ' . $definition;
+            }
+        }
+
+        $options = $struct[SQL::OPTIONS] ?? null;
+
+        $tableOption = '';
+        if (\is_array($options)) {
+            $optionStack = [];
+            foreach ($options as $key => $value) {
+                if (\is_string($value) || \is_int($value)) {
+                    $optionStack[] = $key . ' = ' . $value;
+                }
+            }
+            $tableOption = ' ' . \implode(', ', $optionStack);
+        } elseif (\is_string($options)) {
+            $tableOption = ' ' . $options;
+        }
+
+        $table = $this->tableQuote($table);
+
+        return "CREATE TABLE IF NOT EXISTS $table (" . \implode(', ', $stack) . ")$tableOption";
+    }
+
+    public function drop(string $table): string
+    {
+        return 'DROP TABLE IF EXISTS ' . $this->tableQuote($table);
+    }
+
     /**
      * @param string|array $struct
      *
@@ -667,64 +728,12 @@ class Builder
         }
 
         $join = $struct[SQL::JOIN] ?? null;
+        $isJoin = false;
         $joinKey = \is_array($join) ? \array_keys($join) : null;
 
         if (!empty($joinKey[0]) && $joinKey[0][0] === '[') {
-            $tableJoin = [];
-
-            static $joinArray = [
-                '>' => 'LEFT',
-                '<' => 'RIGHT',
-                '<>' => 'FULL',
-                '><' => 'INNER',
-            ];
-
-            $quote = $this->quote;
-
-            foreach ($join as $sub => $relation) {
-                \preg_match('/(\[(?<join>\<\>?|\>\<?)\])?(?<table>\w+)\s?(\((?<alias>\w+)\))?/',
-                    $sub, $match);
-
-                if ($match['join'] !== '' && $match['table'] !== '') {
-                    if (\is_string($relation)) {
-                        $relation = 'USING (' . $quote . $relation . $quote . ')';
-                    }
-
-                    if (\is_array($relation)) {
-                        // For ['column1', 'column2']
-                        if (isset($relation[0])) {
-                            $relation = 'USING (' . $quote . \implode($quote . ', ' . $quote, $relation) . $quote . ')';
-                        } else {
-                            $joins = [];
-
-                            foreach ($relation as $key => $value) {
-                                $joins[] = (
-                                    \strpos($key, '.') > 0 ?
-                                        // For ['tableB.column' => 'column']
-                                        $this->columnQuote($key) :
-
-                                        // For ['column1' => 'column2']
-                                        $table . '.' . $quote . $key . $quote
-                                    ) .
-                                    ' = ' .
-                                    $this->tableQuote($match['alias'] ?? $match['table']) . '.' . $quote . $value . $quote;
-                            }
-
-                            $relation = 'ON ' . \implode(' AND ', $joins);
-                        }
-                    }
-
-                    $tableName = $this->tableQuote($match['table']) . ' ';
-
-                    if (isset($match['alias'])) {
-                        $tableName .= 'AS ' . $this->tableQuote($match['alias']) . ' ';
-                    }
-
-                    $tableJoin[] = $joinArray[$match['join']] . ' JOIN ' . $tableName . $relation;
-                }
-            }
-
-            $tableQuery .= ' ' . \implode(' ', $tableJoin);
+            $isJoin = true;
+            $tableQuery .= ' ' . $this->buildJoin($table, $join);
         }
 
         $columns = $struct[SQL::SELECT];
@@ -738,7 +747,7 @@ class Builder
                 $column = $fn . '(' . $this->columnPush($columns) . ')';
             }
         } else {
-            $column = $this->columnPush($columns);
+            $column = $this->columnPush($columns, $isJoin);
         }
 
         $sql = 'SELECT ' . $column . ' FROM ' . $tableQuery . $this->suffixClause($struct);
@@ -746,6 +755,65 @@ class Builder
         $this->sql = $sql;
 
         return [$sql, $this->map];
+    }
+
+    protected function buildJoin(string $table, array $join): string
+    {
+        $tableJoin = [];
+
+        static $joinArray = [
+            '>' => 'LEFT',
+            '<' => 'RIGHT',
+            '<>' => 'FULL',
+            '><' => 'INNER',
+        ];
+
+        $quote = $this->quote;
+
+        foreach ($join as $sub => $relation) {
+            \preg_match('/(\[(?<join>\<\>?|\>\<?)\])?(?<table>\w+)\s?(\((?<alias>\w+)\))?/',
+                $sub, $match);
+
+            if ($match['join'] !== '' && $match['table'] !== '') {
+                if (\is_string($relation)) {
+                    $relation = 'USING (' . $quote . $relation . $quote . ')';
+                }
+
+                if (\is_array($relation)) {
+                    // For ['column1', 'column2']
+                    if (isset($relation[0])) {
+                        $relation = 'USING (' . $quote . \implode($quote . ', ' . $quote, $relation) . $quote . ')';
+                    } else {
+                        $joins = [];
+
+                        foreach ($relation as $key => $value) {
+                            $joins[] = (
+                                \strpos($key, '.') > 0 ?
+                                    // For ['tableB.column' => 'column']
+                                    $this->columnQuote($key) :
+
+                                    // For ['column1' => 'column2']
+                                    $table . '.' . $quote . $key . $quote
+                                ) .
+                                ' = ' .
+                                $this->tableQuote($match['alias'] ?? $match['table']) . '.' . $quote . $value . $quote;
+                        }
+
+                        $relation = 'ON ' . \implode(' AND ', $joins);
+                    }
+                }
+
+                $tableName = $this->tableQuote($match['table']) . ' ';
+
+                if (isset($match['alias'])) {
+                    $tableName .= 'AS ' . $this->tableQuote($match['alias']) . ' ';
+                }
+
+                $tableJoin[] = $joinArray[$match['join']] . ' JOIN ' . $tableName . $relation;
+            }
+        }
+
+        return \implode(' ', $tableJoin);
     }
 
     /**
@@ -992,11 +1060,19 @@ class Builder
     /**
      * @param string $table
      *
-     * @return string
+     * @return array
      */
-    public function truncate(string $table): string
+    public function truncate(string $table): array
     {
-        return 'TRUNCATE TABLE ' . $this->tableQuote($table);
+        $table = $this->tableQuote($table);
+        if ($this->type === 'sqlite') {
+            return [
+                'DELETE FROM ' . $table,
+                'UPDATE "sqlite_sequence" SET "seq" = 0 WHERE "name" = ' . $table,
+            ];
+        }
+
+        return ['TRUNCATE TABLE ' . $table];
     }
 
     public function rand($struct): array

@@ -44,6 +44,9 @@ interface SQL
 
     public const DELETE = 'DELETE';
 
+    public const CREATE = 'CREATE',
+        OPTIONS = 'OPTIONS';
+
     public const TABLE = 'TABLE',
         COLUMNS = 'COLUMNS';
 }
