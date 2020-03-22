@@ -930,21 +930,20 @@ class Builder
         $this->map = [];
 
         foreach ($data as $key => $value) {
-            $column = $this->columnQuote(\preg_replace('/\s*\[[+\-*/]\]$/', '', $key));
+            \preg_match('/(?<column>\w+)(\[(?<operator>\+|\-|\*|\/)\])?/i', $key, $match);
 
+            $column = $this->columnQuote($match['column']);
             if ($raw = $this->buildRaw($value)) {
                 $fields[] = $column . ' = ' . $raw;
                 continue;
             }
-
-            $mapKey = $this->mapKey();
-            \preg_match('/(?<column>\w+)(\[(?<operator>\+|\-|\*|\/)\])?/i', $key, $match);
 
             if (isset($match['operator'])) {
                 if (\is_numeric($value)) {
                     $fields[] = $column . ' = ' . $column . ' ' . $match['operator'] . ' ' . $value;
                 }
             } else {
+                $mapKey = $this->mapKey();
                 $fields[] = $column . ' = ' . $mapKey;
                 $this->map[$mapKey] = $this->typeMap($value);
             }
