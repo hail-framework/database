@@ -72,7 +72,7 @@ class Builder
         }
 
         $query = \preg_replace_callback(
-            '/((FROM|TABLE|INTO|UPDATE)\s*)?\<([a-zA-Z0-9_\.]+)\>/i',
+            '/(([`\']).*?)?((FROM|TABLE|INTO|UPDATE|JOIN)\s*)?\<((\w+)(\.\w+)?)\>(.*?\2)?/i',
             [$this, 'buildRawCallback'],
             $raw->value
         );
@@ -90,11 +90,15 @@ class Builder
 
     protected function buildRawCallback(array $matches): string
     {
-        if (!empty($matches[2])) {
-            return $matches[2] . ' ' . $this->tableQuote($matches[3]);
+        if (!empty($matches[2]) && isset($matches[8])) {
+            return $matches[0];
         }
 
-        return $this->columnQuote($matches[3]);
+        if (!empty($matches[4])) {
+            return $matches[1] . $matches[4] . ' ' . $this->tableQuote($matches[5]);
+        }
+
+        return $matches[1] . $this->columnQuote($matches[5]);
     }
 
     protected function typeMap($value): array
@@ -104,10 +108,10 @@ class Builder
             'integer' => PDO::PARAM_INT,
             'boolean' => PDO::PARAM_BOOL,
             'resource' => PDO::PARAM_LOB,
-//            'object' => PDO::PARAM_STR,
-//            'double' => PDO::PARAM_STR,
-//            'string' => PDO::PARAM_STR,
-//            'array' => PDO::PARAM_STR,
+            'object' => PDO::PARAM_STR,
+            'double' => PDO::PARAM_STR,
+            'string' => PDO::PARAM_STR,
+            'array' => PDO::PARAM_STR,
         ];
 
         $type = \gettype($value);
@@ -167,6 +171,10 @@ class Builder
 
     protected function tableQuote($table)
     {
+        if (!\preg_match('/^\w+(\.\w+)?$/', $table)) {
+            throw new \InvalidArgumentException('Incorrect table name "' . $table . '"');
+        }
+
         if (\strpos($table, '.') !== false) { // database.table
             return $this->quote . \str_replace('.', $this->quote . '.' . $this->quote . $this->prefix,
                     $table) . $this->quote;
@@ -189,7 +197,7 @@ class Builder
             return '*';
         }
 
-        if (!\preg_match('/^\w+(\.?\w+)?$/', $string)) {
+        if (!\preg_match('/^\w+(\.\w+)?$/', $string)) {
             throw new \InvalidArgumentException('Incorrect column name "' . $string . '"');
         }
 
@@ -380,7 +388,7 @@ class Builder
                         foreach ($value as $index => $item) {
                             $item = (string) $item;
 
-                            if (!\preg_match('/(\[.+\]|_|%.+|.+%)/', $item)) {
+                            if (!\preg_match('/(\[.+]|[*?!%#^-_]|%.+|.+%)/', $item)) {
                                 $item = '%' . $item . '%';
                             }
 
@@ -674,7 +682,7 @@ class Builder
             if (\is_int($name)) {
                 $stack[] = preg_replace('/\<(\w+)>/', $quote . '$1' . $quote, $definition);
             } elseif (\is_array($definition)) {
-                $stack[] = $quote . $name . $quote. ' ' . implode(' ', $definition);
+                $stack[] = $quote . $name . $quote . ' ' . implode(' ', $definition);
             } elseif (\is_string($definition)) {
                 $stack[] = $quote . $name . $quote . ' ' . $definition;
             }
@@ -1113,8 +1121,8 @@ class Builder
                 $replace = 'NULL';
             } elseif ($value[1] === PDO::PARAM_LOB) {
                 $replace = '\'' . $this->escape(
-                    \stream_get_contents($value[0])
-                ) . '\'';
+                        \stream_get_contents($value[0])
+                    ) . '\'';
             } else {
                 $replace = $value[0];
             }

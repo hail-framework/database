@@ -358,6 +358,8 @@ class Database
      */
     public function exec(string $query, array $map = [], array $fetchArgs = null): ?PDOStatement
     {
+        $this->statement = null;
+
         $pdo = $this->pdo ?? $this->getPdo();
 
         if ($this->debug) {
