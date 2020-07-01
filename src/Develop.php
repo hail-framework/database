@@ -248,25 +248,6 @@ class Develop extends Database
         return $this->done($result);
     }
 
-    public function id()
-    {
-        $sql = self::ID_SQL[$this->type] ?? null;
-
-        if ($sql !== null) {
-            $this->event('start', Event::SELECT);
-            $this->event('sql', $sql);
-        }
-
-        $return = parent::id();
-
-        if ($sql !== null) {
-            $this->event('query');
-            return $this->done($return);
-        }
-
-        return $return;
-    }
-
     protected function event($type, $arg = null)
     {
         switch ($type) {

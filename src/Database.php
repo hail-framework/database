@@ -56,6 +56,8 @@ class Database
      */
     protected $dsn;
 
+    protected $transactions = 0;
+
     public function __construct(array $options)
     {
         $this->init($options);
@@ -820,6 +822,50 @@ class Database
         }
 
         return $result;
+    }
+
+    public function beginTransaction(): void
+    {
+        $pdo = $this->pdo ?? $this->getPdo();
+
+        if ($this->transactions === 0) {
+            $pdo->beginTransaction();
+        } elseif ($this->transactions > 0) {
+            $pdo->exec("SAVEPOINT trans{$this->transactions}");
+        }
+
+        ++$this->transactions;
+    }
+
+    public function commit(): void
+    {
+        if ($this->transactions === 0) {
+            return;
+        }
+
+        if ($this->transactions === 1) {
+            $this->getPdo()->commit();
+        }
+
+        --$this->transactions;
+    }
+
+    public function rollBack(int $toLevel = null): void
+    {
+        if ($toLevel === null) {
+            $toLevel = $this->transactions - 1;
+        } elseif ($toLevel < 0 || $toLevel > $this->transactions) {
+            return;
+        }
+
+        $pdo = $this->pdo ?? $this->getPdo();
+        if ($toLevel === 0) {
+            $pdo->rollBack();
+        } else {
+            $pdo->exec("ROLLBACK TO SAVEPOINT trans{$toLevel}");
+        }
+
+        $this->transactions = $toLevel;
     }
 
     public function error(): ?array
