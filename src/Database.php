@@ -6,10 +6,9 @@
 
 namespace Hail\Database;
 
-use Hail\Database\Sql\SQL;
 use PDO;
 use PDOStatement;
-use Hail\Database\Sql\Builder;
+use Hail\Database\Sql\{SQL, Builder};
 use Hail\SafeStorage\SafeStorageTrait;
 
 /**
@@ -141,93 +140,6 @@ class Database
                     }
                     break;
 
-                case 'sybase':
-                    $attr['driver'] = 'dblib';
-                    if (isset($options['charset'])) {
-                        $attr['charset'] = $options['charset'];
-                    }
-                    break;
-
-                case 'oracle':
-                    $attr['driver'] = $attr['oci'];
-                    if ($attr['host']) {
-                        $attr['dbname'] = '//' . $attr['host'] . ':' . ($attr['port'] ?? '1521') . '/' . $attr['dbname'];
-
-                    }
-                    unset($attr['host'], $attr['port']);
-
-                    if (isset($options['charset'])) {
-                        $attr['charset'] = $options['charset'];
-                    }
-                    break;
-
-                case 'mssql':
-                    $attr['driver'] = \stripos(PHP_OS, 'WIN') === 0 ? 'sqlsrv' : 'dblib';
-
-                    // Keep MSSQL QUOTED_IDENTIFIER is ON for standard quoting
-                    $commands[] = 'SET QUOTED_IDENTIFIER ON';
-                    // Make ANSI_NULLS is ON for NULL value
-                    $commands[] = 'SET ANSI_NULLS ON';
-
-
-                    if ($attr['driver'] === 'dblib') {
-                        if (isset($options['appname'])) {
-                            $attr['appname'] = $options['appname'];
-                        }
-
-                        if (isset($options['charset'])) {
-                            $attr['charset'] = $options['charset'];
-                        }
-                    } else {
-                        if (isset($options['appname'])) {
-                            $attr['APP'] = $options['appname'];
-                        }
-
-                        $config = [
-                            'ApplicationIntent',
-                            'AttachDBFileName',
-                            'Authentication',
-                            'ColumnEncryption',
-                            'ConnectionPooling',
-                            'Encrypt',
-                            'Failover_Partner',
-                            'KeyStoreAuthentication',
-                            'KeyStorePrincipalId',
-                            'KeyStoreSecret',
-                            'LoginTimeout',
-                            'MultipleActiveResultSets',
-                            'MultiSubnetFailover',
-                            'Scrollable',
-                            'TraceFile',
-                            'TraceOn',
-                            'TransactionIsolation',
-                            'TransparentNetworkIPResolution',
-                            'TrustServerCertificate',
-                            'WSID',
-                        ];
-
-                        foreach ($config as $value) {
-                            $keyname = \strtolower(
-                                \preg_replace(
-                                    [
-                                        '/([a-z\d])([A-Z])/',
-                                        '/([^_])([A-Z][a-z])/',
-                                    ], '$1_$2', $value
-                                )
-                            );
-
-                            if (isset($options[$keyname])) {
-                                $attr[$value] = $options[$keyname];
-                            }
-                        }
-
-                        if (isset($options['charset'])) {
-                            $commands[] = "SET NAMES '{$options['charset']}'";
-                        }
-                    }
-
-                    break;
-
                 case 'sqlite':
                     $options['username'] = null;
                     $options['password'] = null;
@@ -241,29 +153,12 @@ class Database
         }
 
         $this->database = $options['database'] ?? $attr['dbname'];
-        $driver = $attr['driver'];
-        unset($attr['driver']);
 
-        if (!\in_array($driver, PDO::getAvailableDrivers(), true)) {
-            throw new \InvalidArgumentException("Unsupported PDO driver: {$driver}");
+        if (!\in_array($attr['driver'], PDO::getAvailableDrivers(), true)) {
+            throw new \InvalidArgumentException("Unsupported PDO driver: {$attr['driver']}");
         }
-
-        $stack = [];
-        foreach ($attr as $key => $value) {
-            if ($value === null) {
-                continue;
-            }
-
-            if (\is_int($key)) {
-                $stack[] = $value;
-            } else {
-                $stack[] = $key . '=' . $value;
-            }
-        }
-        $dsn = $driver . ':' . \implode(';', $stack);
-
         $this->setPassword($options['password']);
-        $this->dsn = [$dsn, $options['username'], $pdoOptions, $commands];
+        $this->dsn = [$attr, $options['username'], $pdoOptions, $commands];
         $this->sql = new Builder($this->type, $options['prefix'] ?? '');
 
         return $this;
@@ -297,8 +192,25 @@ class Database
 
     protected function connect()
     {
-        [$dsn, $username, $options, $commands] = $this->dsn;
+        [$attr, $username, $options, $commands] = $this->dsn;
         $password = $this->getPassword();
+
+        $driver = $attr['driver'];
+        unset($attr['driver']);
+
+        $stack = [];
+        foreach ($attr as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            if (\is_int($key)) {
+                $stack[] = $value;
+            } else {
+                $stack[] = $key . '=' . $value;
+            }
+        }
+        $dsn = $driver . ':' . \implode(';', $stack);
 
         $this->pdo = new PDO(
             $dsn,
@@ -318,10 +230,20 @@ class Database
             return true;
         }
 
-        $pdo = $this->pdo ?? $this->getPdo();
-        if ($pdo->exec('USE `' . $db . '`') !== false) {
-            $this->database = $db;
-            return true;
+        if ($this->type !== 'sqlite') {
+            $sql = null;
+            if ($this->pdo === null) {
+                $this->dsn[0]['dbname'] = $db;
+            } elseif ($this->type === 'mysql') {
+                $sql = 'USE ' . $this->sql->quote($db);
+            } elseif ($this->type === 'pgsql') {
+                $sql = 'SET search_path TO ' . $this->sql->quote($db);
+            }
+
+            if ($sql === null || $this->pdo->exec($sql) !== false) {
+                $this->database = $db;
+                return true;
+            }
         }
 
         return false;
@@ -566,15 +488,9 @@ class Database
             return null;
         }
 
-        $type = $this->type;
-
-        if ($type === 'oracle') {
-            return null;
-        }
-
         $pdo = $this->pdo ?? $this->getPdo();
 
-        if ($type === 'pgsql') {
+        if ($this->type === 'pgsql') {
             $lastId = (int) $pdo->query('SELECT LASTVAL()')->fetchColumn();
         } else {
             $lastId = (int) $pdo->lastInsertId();

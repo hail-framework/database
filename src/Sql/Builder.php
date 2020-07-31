@@ -60,6 +60,11 @@ class Builder
         }
     }
 
+    public function quote(string $string): string
+    {
+        return $this->quote . $string . $this->quote;
+    }
+
     public function raw(string $string, array $map = []): Raw
     {
         return new Raw($string, $map);
@@ -176,16 +181,21 @@ class Builder
         }
 
         if (\strpos($table, '.') !== false) { // database.table
-            return $this->quote . \str_replace('.', $this->quote . '.' . $this->quote . $this->prefix,
-                    $table) . $this->quote;
+            return $this->quote(
+                \str_replace(
+                    '.',
+                    $this->quote('.') . $this->prefix,
+                    $table
+                )
+            );
         }
 
-        return $this->quote . $this->prefix . $table . $this->quote;
+        return $this->quote($this->prefix . $table);
     }
 
     protected function mapKey(): string
     {
-        $index = (string) $this->guid;
+        $index = (string)$this->guid;
         ++$this->guid;
 
         return ":HA_{$index}_IL";
@@ -201,18 +211,19 @@ class Builder
             throw new \InvalidArgumentException('Incorrect column name "' . $string . '"');
         }
 
-        $quote = $this->quote;
-
         if (($p = \strpos($string, '.')) !== false) { // table.column
             if ($string[$p + 1] === '*') {// table.*
-                return $quote . $this->prefix . \substr($string, 0, $p) . $quote . '.*';
+                return $this->quote(
+                        $this->prefix . \substr($string, 0, $p)
+                    ) . '.*';
             }
 
-            return $quote . $this->prefix . \str_replace('.', $quote . '.' . $quote,
-                    $string) . $quote;
+            return $this->quote(
+                $this->prefix . \str_replace('.', $this->quote('.'), $string)
+            );
         }
 
-        return $quote . $string . $quote;
+        return $this->quote($string);
     }
 
     protected function columnPush($columns, bool $isJoin = false): string
@@ -386,7 +397,7 @@ class Builder
                         $like = [];
 
                         foreach ($value as $index => $item) {
-                            $item = (string) $item;
+                            $item = (string)$item;
 
                             if (!\preg_match('/(\[.+]|[*?!%#^-_]|%.+|.+%)/', $item)) {
                                 $item = '%' . $item . '%';
@@ -589,29 +600,14 @@ class Builder
 
         if (isset($struct[SQL::LIMIT])) {
             $LIMIT = $struct[SQL::LIMIT];
-
-            if (\in_array($this->type, ['oracle', 'mssql'], true)) {
-                if (\is_numeric($LIMIT)) {
-                    $LIMIT = [0, $LIMIT];
-                }
-
-                if (
-                    \is_array($LIMIT) &&
-                    \is_numeric($LIMIT[0]) &&
-                    \is_numeric($LIMIT[1])
-                ) {
-                    $clause .= ' OFFSET ' . $LIMIT[0] . ' ROWS FETCH NEXT ' . $LIMIT[1] . ' ROWS ONLY';
-                }
-            } else {
-                if (\is_numeric($LIMIT)) {
-                    $clause .= ' LIMIT ' . $LIMIT;
-                } elseif (
-                    \is_array($LIMIT) &&
-                    \is_numeric($LIMIT[0]) &&
-                    \is_numeric($LIMIT[1])
-                ) {
-                    $clause .= ' LIMIT ' . $LIMIT[1] . ' OFFSET ' . $LIMIT[0];
-                }
+            if (\is_numeric($LIMIT)) {
+                $clause .= ' LIMIT ' . $LIMIT;
+            } elseif (
+                \is_array($LIMIT) &&
+                \is_numeric($LIMIT[0]) &&
+                \is_numeric($LIMIT[1])
+            ) {
+                $clause .= ' LIMIT ' . $LIMIT[1] . ' OFFSET ' . $LIMIT[0];
             }
         }
 
@@ -919,7 +915,7 @@ class Builder
 
     /**
      * @param                $table
-     * @param array          $data
+     * @param array $data
      * @param array|Raw|null $where
      *
      * @return array
@@ -964,7 +960,7 @@ class Builder
     }
 
     /**
-     * @param string|array   $table
+     * @param string|array $table
      * @param array|Raw|null $where
      *
      * @return array
@@ -985,8 +981,8 @@ class Builder
     }
 
     /**
-     * @param array|string   $table
-     * @param array|null     $columns
+     * @param array|string $table
+     * @param array|null $columns
      * @param array|Raw|null $where
      *
      * @return array|null
@@ -1049,17 +1045,10 @@ class Builder
     {
         unset($struct[SQL::COLUMNS], $struct[SQL::SELECT]);
 
-        if ($this->type === 'mssql') {
-            $struct[SQL::FUN] = $this->raw('TOP 1 1');
-        } else {
-            $struct[SQL::FUN] = 1;
-        }
-
+        $struct[SQL::FUN] = 1;
         $this->select($struct);
 
-        if ($this->type !== 'mssql') {
-            $this->sql = 'SELECT EXISTS(' . $this->sql . ')';
-        }
+        $this->sql = 'SELECT EXISTS(' . $this->sql . ')';
 
         return [$this->sql, $this->map];
     }
@@ -1086,12 +1075,9 @@ class Builder
     {
         $struct = $this->selectFormat($struct);
 
-        $type = $this->type;
         $order = 'RANDOM()';
-        if ($type === 'mysql') {
+        if ($this->type === 'mysql') {
             $order = 'RAND()';
-        } elseif ($type === 'mssql') {
-            $order = 'NEWID()';
         }
 
         $struct[SQL::ORDER] = $this->raw($order);
@@ -1110,10 +1096,6 @@ class Builder
 
     public function generate(string $query, array $map): string
     {
-        if ($this->type === 'mssql') {
-            $query = \preg_replace('/"(\w+)"/', '[$1]', $query);
-        }
-
         foreach ($map as $key => $value) {
             if ($value[1] === PDO::PARAM_STR) {
                 $replace = '\'' . $this->escape($value[0]) . '\'';
