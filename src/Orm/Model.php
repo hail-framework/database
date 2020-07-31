@@ -289,7 +289,7 @@ abstract class Model
 
         $class = 'App\\Model\\' . $relation[1];
         $model = new $class();
-        if (!($model instanceof self)) {
+        if (!($model instanceof self::class)) {
             throw new \RuntimeException("Class not a ORM model: $class");
         }
 
